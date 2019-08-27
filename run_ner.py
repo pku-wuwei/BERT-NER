@@ -84,13 +84,15 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, valid_ids=None, label_mask=None):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, valid_ids=None, label_mask=None, input_text=None):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
         self.valid_ids = valid_ids
         self.label_mask = label_mask
+        self.input_text = input_text
+
 
 def readfile(filename):
     '''
@@ -169,6 +171,39 @@ class NerProcessor(DataProcessor):
             examples.append(InputExample(guid=guid,text_a=text_a,text_b=text_b,label=label))
         return examples
 
+
+class EventProcessor(DataProcessor):
+    """Processor for the jsonl data set."""
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(os.path.join(data_dir, "train.json"), "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(os.path.join(data_dir, "test.json"), "dev")
+
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(os.path.join(data_dir, "test.json"), "test")
+
+    def get_labels(self):
+        return ["[CLS]", "[SEP]", 'O', 'B-施事者', 'I-施事者', 'B-发生时间', 'I-发生时间', 'B-受事者', 'I-受事者', 'B-触发词', 'I-触发词', 'B-受事者角色', 'I-受事者角色', 'B-受事者国别', 'I-受事者国别', 'B-施事者国别', 'I-施事者国别', 'B-施事者角色', 'I-施事者角色']
+
+    def _create_examples(self, data_dir, set_type):
+        examples = []
+        lines = open(data_dir).readlines()
+        for i, line in enumerate(lines):
+            print(line.strip())
+            line_data = json.loads(line.strip())
+            guid = "%s-%s" % (set_type, i)
+            text_a = line_data['chars']
+            text_b = None
+            label = line_data['anns']
+            examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+        return examples
+
+
 def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
 
@@ -176,7 +211,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
     
     features = []
     for (ex_index,example) in enumerate(examples):
-        textlist = example.text_a.split(' ')
+        textlist = example.text_a
         labellist = example.label
         tokens = []
         labels = []
@@ -253,7 +288,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                               segment_ids=segment_ids,
                               label_id=label_ids,
                               valid_ids=valid,
-                              label_mask=label_mask))
+                              label_mask=label_mask,
+                              input_text=textlist))
     return features
 
 def main():
@@ -261,23 +297,24 @@ def main():
 
     ## Required parameters
     parser.add_argument("--data_dir",
-                        default=None,
+                        default='/data/nfsdata/home/wuwei/182/001-121/',
                         type=str,
-                        required=True,
+                        required=False,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
-    parser.add_argument("--bert_model", default=None, type=str, required=True,
+    parser.add_argument("--bert_model", default='/data/nfsdata/nlp/BERT_BASE_DIR/chinese_L-12_H-768_A-12/',
+                        type=str, required=False,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
                         "bert-base-multilingual-cased, bert-base-chinese.")
     parser.add_argument("--task_name",
-                        default=None,
+                        default='event',
                         type=str,
-                        required=True,
+                        required=False,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default=None,
+                        default='./out_event_4/',
                         type=str,
-                        required=True,
+                        required=False,
                         help="The output directory where the model predictions and checkpoints will be written.")
 
     ## Other parameters
@@ -286,7 +323,7 @@ def main():
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length",
-                        default=128,
+                        default=256,
                         type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
@@ -301,7 +338,7 @@ def main():
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--train_batch_size",
-                        default=32,
+                        default=16,
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
@@ -309,11 +346,11 @@ def main():
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
-                        default=5e-5,
+                        default=2e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=3.0,
+                        default=30,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
@@ -355,9 +392,10 @@ def main():
         ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
         ptvsd.wait_for_attach()
     
-    processors = {"ner":NerProcessor}
+    processors = {"ner": NerProcessor, 'event': EventProcessor}
 
     if args.local_rank == -1 or args.no_cuda:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '2'
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         n_gpu = torch.cuda.device_count()
     else:
@@ -565,7 +603,7 @@ def main():
             logits = torch.argmax(F.log_softmax(logits,dim=2),dim=2)
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
-            input_mask = input_mask.to('cpu').numpy()
+            input_ids = input_ids.to('cpu').numpy()
         
             for i, label in enumerate(label_ids):
                 temp_1 = []
@@ -573,16 +611,17 @@ def main():
                 for j,m in enumerate(label):
                     if j == 0:
                         continue
-                    elif label_ids[i][j] == 11:
+                    elif label_ids[i][j] == 2:
                         y_true.append(temp_1)
                         y_pred.append(temp_2)
                         break
                     else:
                         temp_1.append(label_map[label_ids[i][j]])
                         temp_2.append(label_map[logits[i][j]])
-
-        report = classification_report(y_true, y_pred,digits=4)
-        logger.info("\n%s", report)
+        for true, pred in zip(y_true, y_pred):
+            print('y_true', true)
+            print('y_pred', pred)
+        report = classification_report(y_true, y_pred, digits=4)
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")
