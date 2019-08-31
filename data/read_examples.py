@@ -10,8 +10,8 @@
 将数据写成可读格式
 """
 import random
-import os
 import json
+import os
 
 ROOT = '/data/nfsdata/home/wuwei/182/001-121/'
 TRAIN_PERCENT = 0.8
@@ -67,18 +67,20 @@ def build_dataset():
             text, anns = read_ann(fname.replace('.txt', ''))
             all_examples.extend(convert_to_example(text, anns))
 
-    idx = int(len(all_examples) * TRAIN_PERCENT)
-    train, test = all_examples[: idx], all_examples[: idx]
-
+    # 筛正例
     pos_examples = []
     neg_examples = []
-    for example in train:
+    for example in all_examples:
         if set(example['anns']) == {'O'}:
             neg_examples.append(example)
         else:
             pos_examples.append(example)
     print(len(pos_examples), len(neg_examples))
-    train = pos_examples + random.sample(neg_examples, 5 * len(pos_examples))
+    all_examples = pos_examples + random.sample(neg_examples, 0 * len(pos_examples))
+
+    # 划分数据
+    idx = int(len(all_examples) * TRAIN_PERCENT)
+    train, test = all_examples[: idx], all_examples[idx:]
 
     with open(os.path.join(ROOT, 'train.json'), 'w') as fo:
         for one_train in train:

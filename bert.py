@@ -12,6 +12,7 @@ from pytorch_pretrained_bert.modeling import (CONFIG_NAME, WEIGHTS_NAME,
                                               BertConfig,
                                               BertForTokenClassification)
 from pytorch_pretrained_bert.tokenization import BertTokenizer
+from nlpc import bert_tokenizer
 
 class BertNer(BertForTokenClassification):
    
@@ -37,6 +38,8 @@ class Ner:
         self.max_seq_length = self.model_config["max_seq_length"]
         self.label_map = {int(k):v for k,v in self.label_map.items()}
         self.model.eval()
+        vocab_path = '/data/nfsdata/nlp/BERT_BASE_DIR/chinese_L-12_H-768_A-12/vocab.txt'
+        bert_tokenizer.full_init(vocab_file=vocab_path)
 
     def load_model(self, model_dir: str, model_config: str = "model_config.json"):
         model_config = os.path.join(model_dir,model_config)
@@ -54,17 +57,19 @@ class Ner:
 
     def tokenize(self, text: str):
         """ tokenize input"""
-        words = word_tokenize(text)
-        tokens = []
-        valid_positions = []
-        for i,word in enumerate(words):
-            token = self.tokenizer.tokenize(word)
-            tokens.extend(token)
-            for i in range(len(token)):
-                if i == 0:
-                    valid_positions.append(1)
-                else:
-                    valid_positions.append(0)
+        # words = word_tokenize(text)
+        # tokens = []
+        # valid_positions = []
+        # for i,word in enumerate(words):
+        #     token = self.tokenizer.tokenize(word)
+        #     tokens.extend(token)
+        #     for i in range(len(token)):
+        #         if i == 0:
+        #             valid_positions.append(1)
+        #         else:
+        #             valid_positions.append(0)
+        tokens, indexes = bert_tokenizer.full_tokenize(text)
+        valid_positions = [1] * len(tokens)
         return tokens, valid_positions
 
     def preprocess(self, text: str):
@@ -89,6 +94,7 @@ class Ner:
         return input_ids,input_mask,segment_ids,valid_positions
 
     def predict(self, text: str):
+        text = text[:500]
         input_ids,input_mask,segment_ids,valid_ids = self.preprocess(text)
         input_ids = torch.tensor([input_ids],dtype=torch.long)
         input_mask = torch.tensor([input_mask],dtype=torch.long)
@@ -114,7 +120,7 @@ class Ner:
         logits.pop()
 
         labels = [(self.label_map[label],confidence) for label,confidence in logits]
-        words = word_tokenize(text)
+        words, indexes = bert_tokenizer.full_tokenize(text)
         assert len(labels) == len(words)
-        output = [{"word":word,"tag":label,"confidence":confidence} for word,(label,confidence) in zip(words,labels)]
+        output = [{"word":word,"tag":label,"confidence":confidence, 'index':index} for word,(label,confidence),index in zip(words,labels, indexes)]
         return output

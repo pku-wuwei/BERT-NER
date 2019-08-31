@@ -15,7 +15,7 @@ from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_pretrained_bert.modeling import (CONFIG_NAME, WEIGHTS_NAME,
                                               BertConfig,
                                               BertForTokenClassification)
-from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
+from pytorch_pretrained_bert.optimization import BertAdam
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from seqeval.metrics import classification_report
 from torch import nn
@@ -29,6 +29,7 @@ logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(messa
                     datefmt = '%m/%d/%Y %H:%M:%S',
                     level = logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class Ner(BertForTokenClassification):
    
@@ -188,18 +189,17 @@ class EventProcessor(DataProcessor):
         return self._create_examples(os.path.join(data_dir, "test.json"), "test")
 
     def get_labels(self):
-        return ["[CLS]", "[SEP]", 'O', 'B-施事者', 'I-施事者', 'B-发生时间', 'I-发生时间', 'B-受事者', 'I-受事者', 'B-触发词', 'I-触发词', 'B-受事者角色', 'I-受事者角色', 'B-受事者国别', 'I-受事者国别', 'B-施事者国别', 'I-施事者国别', 'B-施事者角色', 'I-施事者角色']
+        return ["[CLS]", "[SEP]", 'O', 'B-施事者', 'I-施事者', 'B-发生时间', 'I-发生时间', 'B-发生地点', 'I-发生地点', 'B-受事者', 'I-受事者', 'B-触发词', 'I-触发词', 'B-受事者角色', 'I-受事者角色', 'B-受事者国别', 'I-受事者国别', 'B-施事者国别', 'I-施事者国别', 'B-施事者角色', 'I-施事者角色']
 
     def _create_examples(self, data_dir, set_type):
         examples = []
         lines = open(data_dir).readlines()
         for i, line in enumerate(lines):
-            print(line.strip())
             line_data = json.loads(line.strip())
             guid = "%s-%s" % (set_type, i)
             text_a = line_data['chars']
             text_b = None
-            label = line_data['anns']
+            label = line_data['labels']
             examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
 
@@ -271,7 +271,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         assert len(valid) == max_seq_length
         assert len(label_mask) == max_seq_length
 
-        if ex_index < 5:
+        if ex_index < 2:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
             logger.info("tokens: %s" % " ".join(
@@ -293,11 +293,12 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
     return features
 
 def main():
+
     parser = argparse.ArgumentParser()
 
     ## Required parameters
     parser.add_argument("--data_dir",
-                        default='/data/nfsdata/home/wuwei/182/001-121/',
+                        default='/data/nfsdata/nlp/datasets/event/dataset/',
                         type=str,
                         required=False,
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
@@ -312,7 +313,7 @@ def main():
                         required=False,
                         help="The name of the task to train.")
     parser.add_argument("--output_dir",
-                        default='./out_event_4/',
+                        default='./out_event_5/',
                         type=str,
                         required=False,
                         help="The output directory where the model predictions and checkpoints will be written.")
@@ -338,7 +339,7 @@ def main():
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--train_batch_size",
-                        default=16,
+                        default=20,
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
@@ -346,11 +347,11 @@ def main():
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
-                        default=2e-5,
+                        default=3e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
     parser.add_argument("--num_train_epochs",
-                        default=30,
+                        default=10,
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
@@ -395,7 +396,7 @@ def main():
     processors = {"ner": NerProcessor, 'event': EventProcessor}
 
     if args.local_rank == -1 or args.no_cuda:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+        os.environ['CUDA_VISIBLE_DEVICES'] = '1'
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         n_gpu = torch.cuda.device_count()
     else:
@@ -420,8 +421,6 @@ def main():
     if not args.do_train and not args.do_eval:
         raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train:
-        raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     
@@ -489,7 +488,8 @@ def main():
         optimizer = BertAdam(optimizer_grouped_parameters,
                              lr=args.learning_rate,
                              warmup=args.warmup_proportion,
-                             t_total=num_train_optimization_steps)
+                             t_total=num_train_optimization_steps,
+                             schedule='warmup_linear')
 
     global_step = 0
     nb_tr_steps = 0
@@ -537,12 +537,12 @@ def main():
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
                 if (step + 1) % args.gradient_accumulation_steps == 0:
-                    if args.fp16:
+                    # if args.fp16:
                         # modify learning rate with special warm up BERT uses
                         # if args.fp16 is False, BertAdam is used that handles this automatically
-                        lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
-                        for param_group in optimizer.param_groups:
-                            param_group['lr'] = lr_this_step
+                        # lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
+                        # for param_group in optimizer.param_groups:
+                        #     param_group['lr'] = lr_this_step
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
@@ -588,6 +588,7 @@ def main():
         nb_eval_steps, nb_eval_examples = 0, 0
         y_true = []
         y_pred = []
+        x_tokens = []
         label_map = {i : label for i, label in enumerate(label_list,1)}
         for input_ids, input_mask, segment_ids, label_ids,valid_ids,l_mask in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
@@ -608,26 +609,31 @@ def main():
             for i, label in enumerate(label_ids):
                 temp_1 = []
                 temp_2 = []
+                temp_3 = []
                 for j,m in enumerate(label):
                     if j == 0:
                         continue
                     elif label_ids[i][j] == 2:
                         y_true.append(temp_1)
                         y_pred.append(temp_2)
+                        x_tokens.append(temp_3)
                         break
                     else:
                         temp_1.append(label_map[label_ids[i][j]])
                         temp_2.append(label_map[logits[i][j]])
-        for true, pred in zip(y_true, y_pred):
-            print('y_true', true)
-            print('y_pred', pred)
+                        temp_3.extend(tokenizer.convert_ids_to_tokens([input_ids[i][j]]))
+        for true, pred, token in zip(y_true, y_pred, x_tokens):
+            if true != pred:
+                print('x_tokens', ''.join(token))
+                print('y_true', true)
+                print('y_pred', pred, '\n')
         report = classification_report(y_true, y_pred, digits=4)
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")
             logger.info("\n%s", report)
             writer.write(report)
-        
+
 
 if __name__ == "__main__":
     main()
